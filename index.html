@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema de Gestión de Tickets</title>
+    <!-- Carga de Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Carga de Firebase SDK para Firestore, Auth y Logging -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, onSnapshot, collection, query, orderBy, addDoc, setDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // 0. Configuración Global de Firebase (Necesaria para Canvas)
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+
+        // Inicialización de Firebase
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+        setLogLevel('debug'); // Ver logs de Firestore en la consola
+
+        // Variables globales para ser usadas en el script principal
+        window.db = db;
+        window.auth = auth;
+        window.appId = appId;
+        
+        let userId = null;
+
+        /**
+         * Inicializa la autenticación y establece el listener de tickets.
+         * Esta función se llama al cargar el script, no necesita window.onload
+         */
+        async function initializeAuthAndDatabase() {
+            try {
+                if (typeof __initial_auth_token !== 'undefined') {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (error) {
+                console.error("Error al iniciar sesión en Firebase:", error);
+            }
+
+            onAuthStateChanged(auth, (user) => {
+                if (user) {
+                    userId = user.uid;
+                    window.userId = userId;
+                    console.log("Usuario autenticado. UID:", userId);
+                    // Una vez autenticado, inicializamos la escucha de la base de datos
+                    startListeningForTickets();
+                } else {
+                    // Esto se manejaría si signInAnonymously falla o el usuario cierra sesión
+                    console.log("Usuario no autenticado o cerrado sesión.");
+                }
+            });
+        }
+
+        /**
+         * Comienza la escucha en tiempo real de los tickets en Firestore.
+         */
+        function startListeningForTickets() {
+            if (!window.db || !window.appId) return;
+
+            // Ruta de la colección: /artifacts/{appId}/public/data/tickets
+            const ticketsCollectionRef = collection(db, `artifacts/${appId}/public/data/tickets`);
+            
+            // Creamos una query (sin orderBy para evitar errores de índice en este demo simple)
+            const q = query(ticketsCollectionRef);
+            
+            // Listener en tiempo real
+            onSnapshot(q, (snapshot) => {
+                const fetchedTickets = [];
+                snapshot.forEach(doc => {
+                    const ticketData = doc.data();
+                    // Almacenar el ID de Firestore, que usaremos para futuras actualizaciones
+                    fetchedTickets.push({ 
+                        ...ticketData, 
+                        id: doc.id,
+                        // Convertir la fecha de Firestore (Timestamp) a formato local si existe
+                        date: ticketData.date?.toDate ? ticketData.date.toDate().toLocaleDateString('es-ES') : ticketData.date
+                    });
+                });
+                
+                // Actualizar el estado global de tickets y re-renderizar
+                window.tickets = fetchedTickets;
+                window.renderTicketList();
+            }, (error) => {
+                console.error("Error al escuchar los tickets:", error);
+            });
+        }
+        
+        // Exponer funciones CRUD a nivel global para ser usadas en la lógica principal
+        window.addNewTicket = async (newTicketData) => {
+            try {
+                // Almacenamos en Firestore
+                await addDoc(collection(db, `artifacts/${appId}/public/data/tickets`), newTicketData);
+                console.log("Ticket agregado exitosamente.");
+            } catch (e) {
+                console.error("Error al agregar ticket: ", e);
+            }
+        };
+
+        window.updateTicketInDb = async (firestoreId, newStatus) => {
+            try {
+                const ticketRef = doc(db, `artifacts/${appId}/public/data/tickets`, firestoreId);
+                await updateDoc(ticketRef, {
+                    status: newStatus
+                });
+                console.log(`Estado del ticket ${firestoreId} actualizado a ${newStatus}`);
+            } catch (e) {
+                console.error("Error al actualizar el ticket: ", e);
+            }
+        };
+
+        initializeAuthAndDatabase();
+
+    </script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f4f7f9;
+        }
+    </style>
+</head>
+<body class="min-h-screen">
+
+    <div id="app" class="container mx-auto p-4 sm:p-6 lg:p-8">
+        
+        <!-- Encabezado y Título -->
+        <header class="bg-white shadow-lg rounded-xl p-6 mb-8">
+            <h1 class="text-3xl font-extrabold text-gray-900 flex items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 text-indigo-600 mr-3" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M10 2a8 8 0 100 16 8 8 0 000-16zM6 9a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" />
+                </svg>
+                Gestión de Tickets
+            </h1>
+            <p class="text-gray-500 mt-2">Crea y administra todas las solicitudes de soporte de tu equipo. <span id="user-info" class="text-xs text-indigo-500"></span></p>
+        </header>
+
+        <!-- Contenedor Principal: Formulario y Lista de Tickets -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            
+            <!-- Columna de Creación de Tickets (Izquierda/Arriba) -->
+            <div class="lg:col-span-1">
+                <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-100 sticky top-4">
+                    <h2 class="text-xl font-semibold mb-4 text-gray-800 border-b pb-2">Enviar Solicitud</h2>
+                    
+                    <form id="new-ticket-form" class="space-y-4">
+                        
+                        <!-- Nuevo: Nombre del Solicitante -->
+                        <div>
+                            <label for="applicant-name" class="block text-sm font-medium text-gray-700 mb-1">Nombre Completo</label>
+                            <input type="text" id="applicant-name" required 
+                                class="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150">
+                        </div>
+
+                        <!-- Nuevo: Correo Electrónico -->
+                        <div>
+                            <label for="applicant-email" class="block text-sm font-medium text-gray-700 mb-1">Correo Electrónico</label>
+                            <input type="email" id="applicant-email" required 
+                                class="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150">
+                        </div>
+
+                        <!-- Asunto (Reemplaza Título) -->
+                        <div>
+                            <label for="ticket-subject" class="block text-sm font-medium text-gray-700 mb-1">Asunto</label>
+                            <input type="text" id="ticket-subject" required 
+                                class="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150">
+                        </div>
+
+                        <div>
+                            <label for="ticket-description" class="block text-sm font-medium text-gray-700 mb-1">Descripción del Problema</label>
+                            <textarea id="ticket-description" rows="4" required 
+                                class="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150"></textarea>
+                        </div>
+                        
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label for="ticket-priority" class="block text-sm font-medium text-gray-700 mb-1">Prioridad</label>
+                                <select id="ticket-priority" required
+                                    class="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 appearance-none bg-white transition duration-150">
+                                    <option value="Baja">Baja</option>
+                                    <option value="Media" selected>Media</option>
+                                    <option value="Alta">Alta</option>
+                                </select>
+                            </div>
+                            <!-- Campo para Asignación o Agente, mantenido como mock por ahora -->
+                            <div>
+                                <label for="ticket-assigned-user" class="block text-sm font-medium text-gray-700 mb-1">Asignar a</label>
+                                <input type="text" id="ticket-assigned-user" value="No Asignado" 
+                                    class="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150">
+                            </div>
+                        </div>
+
+                        <button type="submit" 
+                            class="w-full py-3 px-4 border border-transparent rounded-lg shadow-md text-base font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition duration-150 transform hover:scale-[1.01] active:scale-[0.99]">
+                            Enviar Ticket
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Columna de Lista de Tickets (Derecha/Abajo) -->
+            <div class="lg:col-span-2">
+                <h2 class="text-2xl font-bold mb-4 text-gray-800">Tickets Activos (<span id="ticket-count">0</span>)</h2>
+                
+                <div id="ticket-list" class="space-y-4">
+                    <!-- Los tickets se renderizarán aquí -->
+                </div>
+
+                <!-- Mensaje de tickets vacíos -->
+                <div id="empty-state" class="hidden text-center p-8 bg-white rounded-xl shadow border border-gray-100 mt-4">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                    </svg>
+                    <h3 class="mt-2 text-sm font-medium text-gray-900">No hay tickets</h3>
+                    <p class="mt-1 text-sm text-gray-500">Comienza creando tu primer solicitud en el formulario de la izquierda.</p>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Lógica del Sistema de Tickets (Lado Cliente) ---
+
+        // Variables globales (inicializadas por el módulo de Firebase)
+        window.tickets = []; // Ahora poblado por el listener de Firestore
+        let ticketListContainer;
+        let ticketCountSpan;
+        let emptyStateDiv;
+
+        // 1. Funciones de Utilidad (sin cambios)
+        
+        /**
+         * Retorna las clases de color de Tailwind para un estado dado.
+         */
+        function getStatusClasses(status) {
+            switch (status) {
+                case 'Abierto':
+                    return { bg: 'bg-red-100', text: 'text-red-800', badge: 'bg-red-500' };
+                case 'En Progreso':
+                    return { bg: 'bg-blue-100', text: 'text-blue-800', badge: 'bg-blue-500' };
+                case 'Cerrado':
+                    return { bg: 'bg-green-100', text: 'text-green-800', badge: 'bg-green-500' };
+                default:
+                    return { bg: 'bg-gray-100', text: 'text-gray-800', badge: 'bg-gray-500' };
+            }
+        }
+
+        /**
+         * Retorna las clases de color de Tailwind para una prioridad dada.
+         */
+        function getPriorityClasses(priority) {
+            switch (priority) {
+                case 'Alta':
+                    return 'text-red-600 font-bold';
+                case 'Media':
+                    return 'text-yellow-600 font-semibold';
+                case 'Baja':
+                    return 'text-green-600';
+                default:
+                    return 'text-gray-500';
+            }
+        }
+
+
+        // 2. Renderizado y Lógica del DOM
+
+        /**
+         * Renderiza un único ticket como una tarjeta HTML.
+         * NOTA: Aquí usamos ticket.id que ahora es el ID de Firestore.
+         */
+        function renderTicket(ticket) {
+            const { bg, text } = getStatusClasses(ticket.status);
+            const priorityClass = getPriorityClasses(ticket.priority);
+
+            const nextStatus = {
+                'Abierto': 'En Progreso',
+                'En Progreso': 'Cerrado',
+                'Cerrado': 'Abierto'
+            };
+            const currentNextStatus = nextStatus[ticket.status];
+            
+            let buttonText = `Cambiar a ${currentNextStatus}`;
+            let buttonColor = 'bg-blue-600 hover:bg-blue-700';
+            
+            if (ticket.status === 'Cerrado') {
+                buttonText = 'Reabrir Ticket';
+                buttonColor = 'bg-green-600 hover:bg-green-700';
+            }
+
+            return `
+                <div class="ticket-card bg-white p-5 rounded-xl shadow-md border border-gray-200 transition duration-300 hover:shadow-lg" data-id="${ticket.id}">
+                    <div class="flex justify-between items-start mb-3">
+                        <h3 class="text-lg font-bold text-gray-900">${ticket.subject}</h3>
+                        <span class="px-3 py-1 text-xs font-semibold rounded-full ${bg} ${text} transition duration-150">
+                            ${ticket.status}
+                        </span>
+                    </div>
+
+                    <p class="text-sm text-gray-600 mb-4 line-clamp-2">${ticket.description}</p>
+                    
+                    <div class="flex justify-between items-center text-xs text-gray-500 border-t pt-3">
+                        <div>
+                            <p class="mb-1"><strong class="text-gray-700">ID:</strong> <span class="text-gray-900">${ticket.id.substring(0, 8)}...</span></p>
+                            <p class="mb-1"><strong class="text-gray-700">Solicitante:</strong> ${ticket.applicantName}</p>
+                            <p class="mb-1"><strong class="text-gray-700">Email:</strong> ${ticket.applicantEmail}</p>
+                        </div>
+                        
+                        <div class="text-right">
+                            <p class="mb-1">Prioridad: <span class="${priorityClass}">${ticket.priority}</span></p>
+                            <p class="mb-1">Asignado a: <span class="text-gray-700">${ticket.assignedUser}</span></p>
+                            <p class="mb-1">Fecha: ${ticket.date}</p>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-4">
+                        <button onclick="updateTicketStatus('${ticket.id}')"
+                            class="w-full py-2 px-4 rounded-lg text-sm font-medium text-white ${buttonColor} focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition duration-150">
+                            ${buttonText}
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        /**
+         * Renderiza toda la lista de tickets (llamada desde el listener de Firestore).
+         */
+        window.renderTicketList = function() {
+            // Aseguramos que los elementos del DOM existan
+            if (!ticketListContainer) return;
+
+            const ticketsToRender = window.tickets || [];
+
+            // Ordenar: Abiertos, En Progreso, Cerrados, luego por Prioridad (Alta primero)
+            const sortedTickets = ticketsToRender.slice().sort((a, b) => {
+                const statusOrder = { 'Abierto': 1, 'En Progreso': 2, 'Cerrado': 3 };
+                const priorityOrder = { 'Alta': 1, 'Media': 2, 'Baja': 3 };
+
+                if (statusOrder[a.status] !== statusOrder[b.status]) {
+                    return statusOrder[a.status] - statusOrder[b.status];
+                }
+                return priorityOrder[a.priority] - priorityOrder[b.priority];
+            });
+
+            ticketListContainer.innerHTML = sortedTickets.map(renderTicket).join('');
+            ticketCountSpan.textContent = ticketsToRender.length;
+            
+            // Mostrar/Ocultar estado vacío
+            if (ticketsToRender.length === 0) {
+                emptyStateDiv.classList.remove('hidden');
+            } else {
+                emptyStateDiv.classList.add('hidden');
+            }
+            
+            // Mostrar ID del usuario actual (para fines de depuración/colaboración)
+            const userInfoSpan = document.getElementById('user-info');
+            if (window.userId) {
+                userInfoSpan.textContent = `UID: ${window.userId}`;
+            }
+        };
+
+        // 3. Lógica de Eventos
+
+        /**
+         * Maneja la creación de un nuevo ticket y lo guarda en Firestore.
+         */
+        document.getElementById('new-ticket-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+
+            const applicantName = document.getElementById('applicant-name').value.trim();
+            const applicantEmail = document.getElementById('applicant-email').value.trim();
+            const subject = document.getElementById('ticket-subject').value.trim(); // Nuevo nombre
+            const description = document.getElementById('ticket-description').value.trim();
+            const priority = document.getElementById('ticket-priority').value;
+            const assignedUser = document.getElementById('ticket-assigned-user').value.trim() || 'No Asignado';
+
+            if (!subject || !description || !applicantName || !applicantEmail) {
+                console.error("Todos los campos obligatorios deben ser llenados.");
+                return;
+            }
+
+            const newTicketData = {
+                applicantName: applicantName,
+                applicantEmail: applicantEmail,
+                subject: subject,
+                description: description,
+                status: 'Abierto', 
+                priority: priority,
+                assignedUser: assignedUser,
+                date: new Date(), // Usaremos un Timestamp de Firestore
+                // No necesitamos un 'id' manual, Firestore lo proporciona.
+            };
+
+            // Llamada a la función expuesta por el módulo de Firebase
+            window.addNewTicket(newTicketData);
+
+            // Limpiar formulario
+            this.reset();
+        });
+
+        /**
+         * Actualiza el estado de un ticket usando el ID de Firestore.
+         */
+        window.updateTicketStatus = function(firestoreId) {
+            const ticket = window.tickets.find(t => t.id === firestoreId);
+
+            if (ticket) {
+                let newStatus;
+                
+                switch (ticket.status) {
+                    case 'Abierto':
+                        newStatus = 'En Progreso';
+                        break;
+                    case 'En Progreso':
+                        newStatus = 'Cerrado';
+                        break;
+                    case 'Cerrado':
+                        newStatus = 'Abierto'; 
+                        break;
+                    default:
+                        newStatus = 'Abierto';
+                }
+
+                // Llamada a la función expuesta por el módulo de Firebase para actualizar
+                window.updateTicketInDb(firestoreId, newStatus);
+            }
+        };
+
+        // 4. Inicialización del DOM
+        window.onload = function() {
+            ticketListContainer = document.getElementById('ticket-list');
+            ticketCountSpan = document.getElementById('ticket-count');
+            emptyStateDiv = document.getElementById('empty-state');
+            
+            // La lista de tickets se actualizará automáticamente cuando el listener de Firestore termine de cargar
+        };
+    </script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 # Propósito General
 
-Has creado un **Sistema de Gestión de Tickets (v2)**, una aplicación web completa diseñada para que los usuarios puedan enviar solicitudes de soporte y para que un administrador pueda gestionarlas. La aplicación funciona en tiempo real, lo que significa que todos los cambios se reflejan al instante sin necesidad de recargar la página.
+Has creado un **Sistema de Gestión de Tickets**, una aplicación web completa diseñada para que los usuarios puedan enviar solicitudes de soporte y para que un administrador pueda gestionarlas. La aplicación funciona en tiempo real, lo que significa que todos los cambios se reflejan al instante sin necesidad de recargar la página.
 
 ## Tecnologías Utilizadas
 

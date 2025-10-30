@@ -1,35 +1,39 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="do">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sistema de Gestión de Tickets</title>
+    <title>Sistema de Gestión de Tickets (v2)</title>
     <!-- Carga de Tailwind CSS --><script src="https://cdn.tailwindcss.com"></script>
     
     <!-- Carga de Firebase SDK para Firestore, Auth y Logging --><script type="module">
-        // --- INICIO: Bloque de Configuración de Firebase ---
+        // --- INICIO: Bloque de Configuración de Firebase (Actualizado) ---
         import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-auth.js";
-        // Importamos arrayUnion y DELETE_DOC para actualizaciones atómicas y eliminación
+        // Importamos Auth, incluyendo signInWithCustomToken
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-auth.js";
         import { getFirestore, doc, onSnapshot, collection, query, addDoc, updateDoc, arrayUnion, deleteDoc } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
         import { setLogLevel } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
         
-        // 0. Configuración Global de Firebase
-        // *** ESTA CONFIGURACIÓN HA SIDO REEMPLAZADA CON LOS DATOS REALES DE TU PROYECTO 'tickets-2025hh' ***
-        const YOUR_FIREBASE_CONFIG = {
-          apiKey: "AIzaSyCN_of0uJa4Bde9zhfLPVlZMH7DHdgpSZs", 
-          authDomain: "tickets-2025hh.firebaseapp.com", 
-          projectId: "tickets-2025hh", 
-          storageBucket: "tickets-2025hh.firebasestorage.app", 
-          messagingSenderId: "249408436093",
-          appId: "1:249408436093:web:2e10d579ee7ee2c7173e14"
-        };
+        // 0. Configuración Global de Firebase (USANDO VARIABLES DE LA PLATAFORMA)
+        
+        // RECOMENDACIÓN 1: Usar las variables de entorno de la plataforma en lugar de codificar la configuración.
+        const firebaseConfig = typeof __firebase_config !== 'undefined' 
+            ? JSON.parse(__firebase_config)
+            : {
+                // Configuración de respaldo (la tuya original) si __firebase_config no está disponible
+                apiKey: "AIzaSyCN_of0uJa4Bde9zhfLPVlZMH7DHdgpSZs", 
+                authDomain: "tickets-2025hh.firebaseapp.com", 
+                projectId: "tickets-2025hh", 
+                storageBucket: "tickets-2025hh.firebasestorage.app", 
+                messagingSenderId: "249408436093",
+                appId: "1:249408436093:web:2e10d579ee7ee2c7173e14"
+            };
 
-        // El 'appId' usado para la colección de Firestore será el 'projectId'
-        const appId = YOUR_FIREBASE_CONFIG.projectId; 
+        // RECOMENDACIÓN 2: Usar la variable de entorno __app_id
+        const appId = typeof __app_id !== 'undefined' ? __app_id : firebaseConfig.projectId;
         
         // Inicialización de Firebase
-        const app = initializeApp(YOUR_FIREBASE_CONFIG);
+        const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
         const auth = getAuth(app);
         setLogLevel('debug'); // Ver logs de Firestore en la consola
@@ -38,16 +42,25 @@
         window.db = db;
         window.auth = auth;
         window.appId = appId;
-        window.arrayUnion = arrayUnion; // Exponer arrayUnion para usar en la lógica del cliente
+        window.arrayUnion = arrayUnion; // Exponer arrayUnion
         
         let userId = null;
 
         /**
-         * Inicializa la autenticación (Usando Anónima para el despliegue externo) y establece el listener de tickets.
+         * Inicializa la autenticación y establece el listener de tickets.
          */
         async function initializeAuthAndDatabase() {
             try {
-                await signInAnonymously(auth);
+                // RECOMENDACIÓN 3: Usar el token de autenticación de la plataforma si existe.
+                const token = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+                if (token) {
+                    console.log("Iniciando sesión con Custom Token...");
+                    await signInWithCustomToken(auth, token);
+                } else {
+                    console.log("Iniciando sesión anónimamente...");
+                    await signInAnonymously(auth);
+                }
             } catch (error) {
                 console.error("Error al iniciar sesión en Firebase: ", error);
             }
@@ -55,16 +68,15 @@
             onAuthStateChanged(auth, (user) => {
                 if (user) {
                     userId = user.uid;
-                    window.userId = userId;
+                    window.userId = userId; // Exponer el UID
                     console.log("Usuario autenticado. UID:", userId);
-                    // Mostrar el UID en el DOM
+                    
                     const userInfoSpan = document.getElementById('user-info');
                     if (userInfoSpan) {
                          userInfoSpan.textContent = `UID de Agente: ${window.userId}`;
                          userInfoSpan.classList.remove('bg-gray-100', 'text-gray-700');
                          userInfoSpan.classList.add('bg-indigo-50', 'text-indigo-700');
                     }
-                    // Una vez autenticado, inicializamos la escucha de la base de datos
                     startListeningForTickets();
                 } else {
                     console.log("Usuario no autenticado o cerrado sesión.");
@@ -77,44 +89,42 @@
          * Comienza la escucha en tiempo real de los tickets en Firestore.
          */
         function startListeningForTickets() {
-            if (!window.db || !window.appId) return;
+            if (!window.db || !window.appId || !window.userId) {
+                console.warn("Firestore o AppID no están listos. Esperando...");
+                return;
+            }
 
-            // Ruta de la colección: /artifacts/{appId}/public/data/tickets (Datos públicos y compartidos)
             const ticketsCollectionRef = collection(db, `artifacts/${appId}/public/data/tickets`);
-            
             const q = query(ticketsCollectionRef);
             
-            // Listener en tiempo real (onSnapshot)
             onSnapshot(q, (snapshot) => {
                 const fetchedTickets = [];
                 snapshot.forEach(doc => {
                     const ticketData = doc.data();
                     
-                    // Convertir fecha de Firestore a formato de visualización
+                    // Asegurarse de que date y notes/history existan
                     const displayDate = ticketData.date?.toDate ? ticketData.date.toDate().toLocaleDateString('es-ES') : (typeof ticketData.date === 'string' ? ticketData.date : 'N/A');
                     
                     fetchedTickets.push({ 
                         ...ticketData, 
                         id: doc.id,
-                        date: displayDate // Usamos la fecha formateada
+                        date: displayDate,
+                        history: Array.isArray(ticketData.history) ? ticketData.history : [],
+                        notes: Array.isArray(ticketData.notes) ? ticketData.notes : []
                     });
                 });
                 
-                // Actualizar el estado global de tickets y re-renderizar (manteniendo filtros aplicados)
                 window.allTickets = fetchedTickets; 
-                window.applyFilters(); // Re-aplica los filtros existentes a la nueva lista maestra
+                window.applyFilters();
                 
-                // Si el modal de detalle está abierto, re-renderiza su contenido si el ticket sigue existiendo
                  if (window.currentDetailTicketId && !document.getElementById('ticket-detail-modal').classList.contains('hidden')) {
                      const updatedTicket = fetchedTickets.find(t => t.id === window.currentDetailTicketId);
                      if (updatedTicket) {
-                         // Re-renderiza el detalle si el ticket sigue en la lista
                          window.showTicketDetail(window.currentDetailTicketId);
                      } else {
-                         // Cierra el modal si el ticket fue eliminado por otro agente
                          window.hideTicketDetailModal();
                      }
-                }
+                 }
             }, (error) => {
                 console.error("Error al escuchar los tickets:", error);
             });
@@ -123,15 +133,14 @@
         // Exponer funciones CRUD para la lógica principal
         window.addNewTicket = async (newTicketData) => {
             try {
-                // Al crear, inicializamos el historial
+                // Revertido: Usar 'Usuario Final' para el historial de creación
                 newTicketData.history = [{
                     timestamp: new Date(),
                     status: 'Abierto',
-                    changedBy: 'Usuario Final' // Asumimos que el primer estado lo pone el creador
+                    changedBy: 'Usuario Final' // Usar 'Usuario Final' como en v1
                 }];
-                newTicketData.notes = []; // Inicializamos las notas como un array vacío
+                newTicketData.notes = []; 
 
-                // Almacenamos en Firestore
                 await addDoc(collection(db, `artifacts/${appId}/public/data/tickets`), newTicketData);
                 console.log("Ticket agregado exitosamente a Firestore.");
             } catch (e) {
@@ -143,16 +152,15 @@
             try {
                 const ticketRef = doc(db, `artifacts/${appId}/public/data/tickets`, firestoreId);
                 
-                // Registro de la acción de cambio de estado
+                // Revertido: Usar ADMIN_NAME (definido en el script principal) para el historial
                 const historyEntry = {
                     timestamp: new Date(),
                     status: newStatus,
-                    changedBy: ADMIN_NAME // Usamos el nombre del administrador/agente
+                    changedBy: window.ADMIN_NAME // Usar el nombre de admin
                 };
 
                 await updateDoc(ticketRef, {
                     status: newStatus,
-                    // Uso de arrayUnion para agregar el nuevo historial de forma atómica
                     history: window.arrayUnion(historyEntry) 
                 });
                 console.log(`Estado del ticket ${firestoreId} actualizado a ${newStatus} y se añadió historial.`);
@@ -165,14 +173,14 @@
             try {
                 const ticketRef = doc(db, `artifacts/${appId}/public/data/tickets`, firestoreId);
                 
+                // Revertido: Usar ADMIN_NAME para las notas
                 const noteEntry = {
                     timestamp: new Date(),
                     content: noteContent,
-                    addedBy: ADMIN_NAME // Usamos el nombre del administrador/agente
+                    addedBy: window.ADMIN_NAME // Usar el nombre de admin
                 };
 
                 await updateDoc(ticketRef, {
-                    // Uso de arrayUnion para agregar la nueva nota de forma atómica
                     notes: window.arrayUnion(noteEntry) 
                 });
                 console.log(`Nota interna agregada al ticket ${firestoreId}.`);
@@ -186,7 +194,6 @@
                 const ticketRef = doc(db, `artifacts/${appId}/public/data/tickets`, firestoreId);
                 await deleteDoc(ticketRef);
                 console.log(`Ticket ${firestoreId} eliminado exitosamente de Firestore.`);
-                // onSnapshot se encargará de actualizar la UI y cerrar el modal.
             } catch (e) {
                 console.error("Error al eliminar ticket: ", e);
             }
@@ -237,7 +244,7 @@
         <!-- Encabezado y Título --><header class="bg-white shadow-lg rounded-xl p-6 mb-8">
             <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center">
                 <div class="mb-4 sm:mb-0 flex items-center">
-                    <!-- Logo de la compañía --><img src="https://lh3.googleusercontent.com/a-/ALV-UjWL3AFhmPwhJAOcmAICJT87Mu8mzBg3FnOiIbeFfiVyl9fj6Fjlvc4rN3RcNfxdgDjQi1l__bZs4i4ldQzEY-MGvzMOBQH4q_X_hVeopWgfeWNvWcdz69Iz2wjX90OggTEFBFtgvJs3o1jqH3MzhIvPDtKrj3UL75cotCloYpUKlZmNwTWwVvsZrk32Fw1R2h2UKKvfh4IhZlOINSvXZ9KWuIB7Z9s3oFfPkTmldXKn8VJw6nQK_ZTYJYNKLZMyrRr7S2pwe-vhZCen-hSB6IfBnNSqm7sHb55cmAQ3-aCGjsX91Q9qmmQ6O3Ttu6a1XTHTUPLcN7TJ8S17sg-f-o60_5DPdZX4b4NzFZWwwJAUprqyt4eAY_W8ieQ66UB04Hkn4j2pppO-rd3xhL_TYIQPv2A7v572iFL-DyIlLX3-uvZpNXGGXYtw-gIf40zdZH7Y5CmENuIYfDdx4DtQaelQD5JQNnYbA5iP65F7nzR0QQH4xYFiEcFxNXMU5siC4gvni0Ht4unkBURJ_qPSvOfMrA1AYkP1Mn_8uRWsCm4T52kTTIYIYmrqpoUdYxQeTTIDkFieVJm3gAIqt57UZh1cKRuu1jaXkXZzZO5f4ebYcxQ8JK3Zg6VBy28dI2d16nYV4WIEDi_OvhPyBphy-d8p4sYFs9XCRKOck0ABC54_wcyrw8xKbaS0In59-AwBYnxf-58Z8yS8TaYXSxT_8fwNMN1FHHVmW1GPj4MJBxVvvC6gkTNhADk_ToVY3tBrJUlSFWI-wJ4ulGa73-UFveX1OYBmF9c4gFSPVMb0Ah7v93SnBqlbYdV8U2g7geUeqUYuj0jNuSFSzmd1FyVJQRvaYe5O6CUTVWKqoXxPITVnoKu3uLhICwOzEwNuI6jtOzIFXIvMhJdg38pCoBohUdii7gkmNgcjpQfEzN3Agok0t9wi_QAanfwZwcNSWb-TOcw3O4D9W5bYqkTqswgmn3nLej0C_jWL7elPBeIUG6517xFIl7yzL7LhB7Ff0AYk0kOI-XJ78jRt39UNEFocxWCltDEQ5Ia5U0TtWGWy8Cpaim8kMNs-Ej5a=s288-c-no" alt="Handhels Valera Logo" class="h-10 w-auto mr-3">
+                    <!-- Logo de la compañía --><img src="https://images.vexels.com/media/users/3/137615/isolated/preview/5af2a9cbd8cd93aa90889fbc05656cb5-cubo-de-logo-abstracto-geometrico.png" alt="Handhels Valera Logo" class="h-10 w-auto mr-3">
                     <h1 class="text-3xl font-extrabold text-gray-900 flex items-center">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 text-indigo-600 mr-3" viewBox="0 0 20 20" fill="currentColor">
                             <path d="M10 2a8 8 0 100 16 8 8 0 000-16zM6 9a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" />
@@ -249,13 +256,13 @@
                 <!-- Control de Modo Agente --><div class="flex items-center space-x-3 bg-gray-100 p-3 rounded-lg shadow-inner">
                     <span class="text-sm font-medium text-gray-700">Activar Modo Administrador</span>
                     <label class="toggle-switch relative inline-block w-10 h-6">
-                        <!-- INICIO: El switch comienza desmarcado (Modo Agente por defecto) --><input type="checkbox" id="agent-mode-toggle" class="opacity-0 w-0 h-0">
+                        <input type="checkbox" id="agent-mode-toggle" class="opacity-0 w-0 h-0">
                         <span class="slider absolute cursor-pointer top-0 left-0 right-0 bottom-0 bg-gray-300 rounded-full transition duration-400 before:absolute before:content-[''] before:h-5 before:w-5 before:left-[2px] before:bottom-[2px] before:bg-white before:rounded-full before:transition before:duration-400"></span>
                     </label>
                 </div>
             </div>
 
-            <!-- Información del Usuario (Agente/UID) --><p id="user-info" class="mt-4 text-xs font-mono bg-indigo-50 text-indigo-700 p-2 rounded-lg break-all">
+            <!-- Información del Usuario (Agente/UID) --><p id="user-info" class="mt-4 text-xs font-mono bg-gray-100 text-gray-700 p-2 rounded-lg break-all">
                 Cargando UID de Agente...
             </p>
         </header>
@@ -280,7 +287,7 @@
                                 class="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150">
                         </div>
 
-                        <!-- Asunto (REEMPLAZADO POR SELECT) --><div>
+                        <!-- Asunto (SELECT) --><div>
                             <label for="ticket-subject" class="block text-sm font-medium text-gray-700 mb-1">Asunto</label>
                             <select id="ticket-subject" required 
                                 class="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 appearance-none bg-white transition duration-150">
@@ -308,7 +315,7 @@
                                     <option value="Alta">Alta</option>
                                 </select>
                             </div>
-                            <!-- Campo para Asignación o Agente, mantenido como mock por ahora --><div>
+                            <div>
                                 <label for="ticket-assigned-user" class="block text-sm font-medium text-gray-700 mb-1">Asignar a</label>
                                 <input type="text" id="ticket-assigned-user" value="Handhels Valera" 
                                     class="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150">
@@ -365,7 +372,7 @@
         </div>
     </div>
     
-    <!-- Modal de Contraseña (OCULTO POR DEFECTO) --><div id="password-modal" class="modal hidden fixed inset-0 z-50 flex items-center justify-center bg-gray-900 bg-opacity-70" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+    <!-- Modal de Contraseña (Revertido a Contraseña) --><div id="password-modal" class="modal hidden fixed inset-0 z-50 flex items-center justify-center bg-gray-900 bg-opacity-70" aria-labelledby="modal-title" role="dialog" aria-modal="true">
         <div class="bg-white rounded-xl overflow-hidden shadow-2xl transform transition-all sm:max-w-lg w-full p-6">
             <div class="sm:flex sm:items-start">
                 <div class="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-indigo-100 sm:mx-0 sm:h-10 sm:w-10">
@@ -379,9 +386,10 @@
                     </h3>
                     <div class="mt-2">
                         <p class="text-sm text-gray-500">
+                            <!-- Revertido -->
                             Introduce la contraseña de administrador para habilitar la gestión de estados y notas de tickets.
                         </p>
-                        <!-- Se eliminó la línea que mostraba la contraseña de prueba --><input type="password" id="admin-password-input" 
+                        <input type="password" id="admin-password-input" 
                             class="mt-4 w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150"
                             placeholder="Contraseña">
                         <p id="password-error" class="text-red-500 text-xs mt-2 hidden">Contraseña incorrecta. Inténtalo de nuevo.</p>
@@ -401,7 +409,7 @@
         </div>
     </div>
     
-    <!-- Modal de Detalle de Ticket (OCULTO POR DEFECTO) --><div id="ticket-detail-modal" data-ticket-id="" class="modal hidden fixed inset-0 z-50 overflow-y-auto flex items-center justify-center bg-gray-900 bg-opacity-70" role="dialog" aria-modal="true">
+    <!-- Modal de Detalle de Ticket --><div id="ticket-detail-modal" data-ticket-id="" class="modal hidden fixed inset-0 z-50 overflow-y-auto flex items-center justify-center bg-gray-900 bg-opacity-70" role="dialog" aria-modal="true">
         <div class="bg-white rounded-xl shadow-2xl transform transition-all sm:my-8 sm:w-full sm:max-w-4xl max-h-[90vh] overflow-hidden">
             <!-- Contenido del Modal --><div class="p-6">
                 <!-- Encabezado del Ticket --><div class="flex justify-between items-start border-b pb-4 mb-4">
@@ -508,14 +516,16 @@
         // --- Lógica del Sistema de Tickets (Lado Cliente/Compartido) ---
 
         // ESTADO INICIAL
-        window.allTickets = []; // Almacena la lista completa sin filtrar (viene de onSnapshot)
-        window.tickets = []; // Almacena la lista filtrada (la que se renderiza)
+        window.allTickets = [];
+        window.tickets = []; 
         window.isAgentMode = false; 
-        window.currentDetailTicketId = null; // ID del ticket actualmente abierto en el modal
-        window.ticketToDeleteId = null; // ID del ticket pendiente de confirmación de borrado
+        window.currentDetailTicketId = null; 
+        window.ticketToDeleteId = null; 
         
-        const ADMIN_PASSWORD = 'HandhelsV21,'; // Contraseña de administrador actualizada
-        const ADMIN_NAME = 'Handhels Valera'; // Nombre del administrador y asignado por defecto
+        // Revertido: Usar Contraseña codificada y Nombre
+        const ADMIN_PASSWORD = 'HandhelsV21,';
+        const ADMIN_NAME = 'Handhels Valera';
+        window.ADMIN_NAME = ADMIN_NAME; // Exponer para el módulo de Firebase
 
         let ticketListContainer;
         let ticketCountSpan;
@@ -571,13 +581,10 @@
          */
         function handleToggleChange() {
             if (agentModeToggle.checked) {
-                // Usuario está intentando activar el Modo Administrador -> Mostrar Modal
                 showPasswordModal();
             } else {
-                // Usuario está desactivando el Modo Administrador -> Desactivar inmediatamente
                 window.isAgentMode = false;
                 window.renderTicketList();
-                // Si el modal de detalle está abierto, actualiza su contenido
                 if (!detailModal.classList.contains('hidden')) {
                      const ticketId = detailModal.getAttribute('data-ticket-id');
                      if (ticketId) showTicketDetail(ticketId);
@@ -597,21 +604,21 @@
         }
 
         function verifyPassword() {
-            const enteredPassword = passwordInput.value;
+            const enteredValue = passwordInput.value;
             
-            if (enteredPassword === ADMIN_PASSWORD) {
+            // Revertido: Verificar contra la contraseña codificada
+            if (enteredValue === ADMIN_PASSWORD) {
                 // Éxito: Activar Modo Administrador
                 window.isAgentMode = true;
                 agentModeToggle.checked = true;
                 hidePasswordModal();
                 window.renderTicketList();
-                // Si el modal de detalle está abierto, actualiza su contenido
                  if (!detailModal.classList.contains('hidden')) {
                      const ticketId = detailModal.getAttribute('data-ticket-id');
                      if (ticketId) showTicketDetail(ticketId);
-                }
+                 }
             } else {
-                // Error: Mostrar mensaje y mantener el modo en OFF
+                // Error
                 passwordError.classList.remove('hidden');
                 passwordInput.value = '';
                 passwordInput.focus();
@@ -624,33 +631,24 @@
 
         // --- Lógica de Filtrado ---
 
-        /**
-         * Aplica los filtros seleccionados a la lista completa de tickets (allTickets).
-         */
         window.applyFilters = function() {
             const selectedStatus = filterStatusSelect.value;
             const selectedPriority = filterPrioritySelect.value;
 
             let filteredTickets = window.allTickets.slice();
 
-            // 1. Filtrar por Estado
             if (selectedStatus !== 'Todos') {
                 filteredTickets = filteredTickets.filter(ticket => ticket.status === selectedStatus);
             }
 
-            // 2. Filtrar por Prioridad
             if (selectedPriority !== 'Todas') {
                 filteredTickets = filteredTickets.filter(ticket => ticket.priority === selectedPriority);
             }
             
-            // 3. Actualizar la lista visible y renderizar
             window.tickets = filteredTickets;
             window.renderTicketList();
         }
 
-        /**
-         * Restablece los selectores de filtro y aplica los filtros (muestra todos).
-         */
         window.resetFilters = function() {
             filterStatusSelect.value = 'Todos';
             filterPrioritySelect.value = 'Todas';
@@ -660,9 +658,6 @@
 
         // 2. Renderizado de la Lista
 
-        /**
-         * Renderiza un único ticket como una tarjeta HTML.
-         */
         function renderTicket(ticket) {
             const { bg, text } = getStatusClasses(ticket.status);
             const priorityClass = getPriorityClasses(ticket.priority);
@@ -682,35 +677,22 @@
                 buttonColor = 'bg-green-600 hover:bg-green-700';
             }
 
-            // Lógica Condicional 1: El botón de administración solo se renderiza si isAgentMode = true
-            // Lógica Condicional 2: El botón de administración NO se renderiza si el ticket está 'Cerrado'
-            const isClosed = ticket.status === 'Cerrado';
-
             const updateButtonHTML = window.isAgentMode ? 
-                (isClosed ? 
-                    `
-                    <div class="mt-4">
-                        <p class="text-xs text-gray-500 italic text-center py-2 border-t pt-2">Ticket Cerrado. No se puede reabrir.</p>
-                    </div>
-                    `
-                    :
-                    `
-                    <div class="mt-4">
-                        <button onclick="updateTicketStatus('${ticket.id}')"
-                            class="w-full py-2 px-4 rounded-lg text-sm font-medium text-white ${buttonColor} focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition duration-150">
-                            ${buttonText}
-                        </button>
-                    </div>
-                    `
-                )
+                `
+                <div class="mt-4">
+                    <button onclick="event.stopPropagation(); updateTicketStatus('${ticket.id}')"
+                        class="w-full py-2 px-4 rounded-lg text-sm font-medium text-white ${buttonColor} focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition duration-150">
+                        ${buttonText}
+                    </button>
+                </div>
+                `
                 : 
                 `
                  <div class="mt-4">
-                    <p class="text-xs text-gray-500 italic text-center py-2 border-t pt-2">Botón visible solo en Modo Administrador.</p>
-                </div>
-            `;
+                     <p class="text-xs text-gray-500 italic text-center py-2 border-t pt-2">Botón visible solo en Modo Administrador.</p>
+                 </div>
+                `;
             
-            // Usamos un ID corto de Firestore (la ID completa está en ticket.id)
             const displayId = ticket.id.substring(0, 8);
 
 
@@ -742,16 +724,11 @@
             `;
         }
 
-        /**
-         * Renderiza toda la lista de tickets.
-         */
         window.renderTicketList = function() {
-            // Aseguramos que los elementos del DOM existan
             if (!ticketListContainer) return;
 
             const ticketsToRender = window.tickets || [];
 
-            // Ordenar: Abiertos, En Progreso, Cerrados, luego por Prioridad (Alta primero)
             const sortedTickets = ticketsToRender.slice().sort((a, b) => {
                 const statusOrder = { 'Abierto': 1, 'En Progreso': 2, 'Cerrado': 3 };
                 const priorityOrder = { 'Alta': 1, 'Media': 2, 'Baja': 3 };
@@ -765,7 +742,6 @@
             ticketListContainer.innerHTML = sortedTickets.map(renderTicket).join('');
             ticketCountSpan.textContent = ticketsToRender.length;
             
-            // Mostrar/Ocultar estado vacío
             if (ticketsToRender.length === 0) {
                 emptyStateDiv.classList.remove('hidden');
             } else {
@@ -776,9 +752,6 @@
 
         // 3. Lógica del Modal de Detalle
         
-        /**
-         * Renderiza el historial de estados.
-         */
         function renderHistory(ticket) {
             const historyContainer = document.getElementById('tab-content-history');
             const history = Array.isArray(ticket.history) ? ticket.history : [];
@@ -788,15 +761,18 @@
                 return;
             }
 
-            // Ordenar por fecha descendente (más reciente primero)
-            const sortedHistory = history.slice().sort((a, b) => b.timestamp.toDate() - a.timestamp.toDate());
+            const sortedHistory = history.slice().sort((a, b) => {
+                const dateA = a.timestamp?.toDate ? a.timestamp.toDate() : new Date(0);
+                const dateB = b.timestamp?.toDate ? b.timestamp.toDate() : new Date(0);
+                return dateB - dateA;
+            });
 
             historyContainer.innerHTML = sortedHistory.map(item => {
-                const timestamp = item.timestamp.toDate().toLocaleString('es-ES');
+                const timestamp = item.timestamp?.toDate ? item.timestamp.toDate().toLocaleString('es-ES') : 'Fecha desconocida';
                 const { base } = getStatusClasses(item.status);
                 
-                // Muestra el nombre completo si coincide con ADMIN_NAME, sino muestra el ID truncado
-                const changerDisplay = item.changedBy === ADMIN_NAME ? ADMIN_NAME : item.changedBy.substring(0, 8) + '...';
+                // Revertido: Mostrar el nombre guardado (ej. 'Usuario Final' o 'Handhels Valera')
+                const changerDisplay = item.changedBy || 'Desconocido';
 
                 return `
                     <div class="flex items-center space-x-3 p-3 bg-white rounded-lg shadow-sm border border-gray-100">
@@ -810,36 +786,34 @@
             }).join('');
         }
         
-        /**
-         * Renderiza las notas internas.
-         */
         function renderNotes(ticket) {
             const notesContainer = document.getElementById('notes-list');
             const notes = Array.isArray(ticket.notes) ? ticket.notes : [];
             const addNoteSection = document.getElementById('add-note-section');
-            const notesAdminRequired = document.getElementById('notes-admin-required'); // Referencia al mensaje
+            const notesAdminRequired = document.getElementById('notes-admin-required');
             
-            // 1. CONTROL DE VISIBILIDAD DEL FORMULARIO DE EDICIÓN
             if (window.isAgentMode) {
-                addNoteSection.classList.remove('hidden'); // Admin puede añadir notas
-                notesAdminRequired.classList.add('hidden'); // Ocultar mensaje de requisito
+                addNoteSection.classList.remove('hidden');
+                notesAdminRequired.classList.add('hidden');
             } else {
-                addNoteSection.classList.add('hidden'); // Agente (solo lectura) no puede añadir notas
-                notesAdminRequired.classList.remove('hidden'); // Mostrar mensaje de requisito
+                addNoteSection.classList.add('hidden');
+                notesAdminRequired.classList.remove('hidden');
             }
 
-            // 2. RENDERIZADO DE NOTAS (Visible para todos)
             if (notes.length === 0) {
                 notesContainer.innerHTML = '<p class="text-sm text-gray-500 italic">Aún no hay notas internas.</p>';
             } else {
-                // Ordenar por fecha descendente (más reciente primero)
-                const sortedNotes = notes.slice().sort((a, b) => b.timestamp.toDate() - a.timestamp.toDate());
+                const sortedNotes = notes.slice().sort((a, b) => {
+                    const dateA = a.timestamp?.toDate ? a.timestamp.toDate() : new Date(0);
+                    const dateB = b.timestamp?.toDate ? b.timestamp.toDate() : new Date(0);
+                    return dateB - dateA;
+                });
 
                 notesContainer.innerHTML = sortedNotes.map(note => {
-                    const timestamp = note.timestamp.toDate().toLocaleString('es-ES');
+                    const timestamp = note.timestamp?.toDate ? note.timestamp.toDate().toLocaleString('es-ES') : 'Fecha desconocida';
                     
-                    // Muestra el nombre completo si coincide con ADMIN_NAME, sino muestra el ID truncado
-                    const adderDisplay = note.addedBy === ADMIN_NAME ? ADMIN_NAME : note.addedBy.substring(0, 8) + '...';
+                    // Revertido: Mostrar el nombre guardado
+                    const adderDisplay = note.addedBy || 'Desconocido';
 
                     return `
                         <div class="p-4 bg-gray-50 rounded-lg border border-gray-200">
@@ -853,9 +827,6 @@
             }
         }
 
-        /**
-         * Muestra el modal de detalle para un ticket específico.
-         */
         window.showTicketDetail = function(ticketId) {
             const ticket = window.allTickets.find(t => t.id === ticketId);
             if (!ticket) {
@@ -868,7 +839,6 @@
             const priorityClass = getPriorityClasses(ticket.priority);
             const displayId = ticket.id.substring(0, 8);
 
-            // 1. Rellenar Información del Modal
             document.getElementById('detail-subject').textContent = ticket.subject;
             
             const statusBadge = document.getElementById('detail-status-badge');
@@ -884,7 +854,6 @@
             document.getElementById('detail-assigned-user').textContent = ticket.assignedUser;
             document.getElementById('detail-description').textContent = ticket.description;
             
-            // 2. Establecer el ID en el modal y controlar la visibilidad del botón de borrado
             detailModal.setAttribute('data-ticket-id', ticketId);
             if (window.isAgentMode) {
                 deleteTicketSection.classList.remove('hidden');
@@ -892,19 +861,13 @@
                 deleteTicketSection.classList.add('hidden');
             }
 
-
-            // 3. Renderizar Pestañas (Mostrar la de Historial por defecto)
             switchDetailTab('history');
-            renderHistory(ticket); // Inicializar historial
-            renderNotes(ticket); // Inicializar notas
+            renderHistory(ticket);
+            renderNotes(ticket); 
 
-            // 4. Mostrar Modal
             detailModal.classList.remove('hidden');
         };
 
-        /**
-         * Muestra el modal de confirmación de borrado.
-         */
         window.showDeleteConfirmation = function(ticketId) {
             window.ticketToDeleteId = ticketId;
             const ticket = window.allTickets.find(t => t.id === ticketId);
@@ -912,32 +875,23 @@
             if (ticket) {
                 deleteTicketSubjectSpan.textContent = `"${ticket.subject}"`;
                 deleteConfirmationModal.classList.remove('hidden');
-                hideTicketDetailModal(); // Ocultamos el modal de detalle
+                hideTicketDetailModal();
             } else {
                 console.error("No se puede confirmar la eliminación: Ticket no encontrado.");
             }
         }
 
-        /**
-         * Oculta el modal de confirmación de borrado.
-         */
         window.hideDeleteConfirmation = function() {
             deleteConfirmationModal.classList.add('hidden');
             window.ticketToDeleteId = null;
         }
 
 
-        /**
-         * Oculta el modal de detalle.
-         */
         window.hideTicketDetailModal = function() {
             detailModal.classList.add('hidden');
             window.currentDetailTicketId = null;
         };
 
-        /**
-         * Cambia el contenido de la pestaña en el modal de detalle.
-         */
         window.switchDetailTab = function(tabName) {
             document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
             document.querySelectorAll('.tab-button').forEach(el => el.classList.remove('active'));
@@ -948,15 +902,12 @@
 
         // 4. Lógica de Eventos
 
-        /**
-         * Maneja la creación de un nuevo ticket y lo guarda en Firestore.
-         */
         document.getElementById('new-ticket-form').addEventListener('submit', function(e) {
             e.preventDefault();
 
             const applicantName = document.getElementById('applicant-name').value.trim();
             const applicantEmail = document.getElementById('applicant-email').value.trim();
-            const subject = document.getElementById('ticket-subject').value; // Ahora es un select, solo obtiene el valor
+            const subject = document.getElementById('ticket-subject').value;
             const description = document.getElementById('ticket-description').value.trim();
             const priority = document.getElementById('ticket-priority').value;
             const assignedUser = document.getElementById('ticket-assigned-user').value.trim() || 'No Asignado';
@@ -974,20 +925,17 @@
                 status: 'Abierto', 
                 priority: priority,
                 assignedUser: assignedUser,
-                date: new Date(), // Usaremos un Timestamp de Firestore
+                date: new Date(),
             };
 
-            // Llamada a la función expuesta por el módulo de Firebase para agregar a Firestore
             window.addNewTicket(newTicketData);
 
-            // Limpiar formulario (resetear el select de Asunto a la opción por defecto)
             this.reset();
-            document.getElementById('ticket-subject').value = ""; // Asegura que se seleccione la opción 'Selecciona...'
+            document.getElementById('ticket-subject').value = "";
+            document.getElementById('ticket-priority').value = "Media";
+            document.getElementById('ticket-assigned-user').value = "Handhels Valera";
         });
         
-        /**
-         * Maneja la adición de una nota interna.
-         */
         document.getElementById('add-note-form').addEventListener('submit', function(e) {
             e.preventDefault();
 
@@ -1001,15 +949,12 @@
 
             if (noteContent && ticketId) {
                 window.addInternalNote(ticketId, noteContent);
-                document.getElementById('note-content-input').value = ''; // Limpiar campo
+                document.getElementById('note-content-input').value = '';
             } else {
                  console.error("Contenido de nota o ID de ticket no válido.");
             }
         });
         
-        /**
-         * Maneja la acción final de borrado.
-         */
          document.getElementById('confirm-delete-btn').addEventListener('click', () => {
              if (window.ticketToDeleteId) {
                  window.deleteTicketInDb(window.ticketToDeleteId);
@@ -1018,12 +963,10 @@
          });
 
 
-        /**
-         * Actualiza el estado de un ticket usando el ID de Firestore.
-         */
         window.updateTicketStatus = function(firestoreId) {
+            event.stopPropagation();
+
             if (!window.isAgentMode) {
-                // Si alguien intenta llamar la función sin estar en Modo Admin, revertir el switch y pedir contraseña.
                 agentModeToggle.checked = false; 
                 window.renderTicketList();
                 showPasswordModal();
@@ -1034,12 +977,6 @@
 
             if (ticket) {
                 
-                // *** NUEVA LÓGICA: Impedir reabrir si está cerrado ***
-                if (ticket.status === 'Cerrado') {
-                    console.warn(`No se puede cambiar el estado: El ticket ${firestoreId} ya está Cerrado.`);
-                    return; // No hace nada si ya está cerrado
-                }
-                
                 let newStatus;
                 
                 switch (ticket.status) {
@@ -1049,19 +986,19 @@
                     case 'En Progreso':
                         newStatus = 'Cerrado';
                         break;
+                    case 'Cerrado':
+                        newStatus = 'Abierto';
+                        break;
                     default:
-                        // No debería llegar aquí si ya se chequeó 'Cerrado'
                         newStatus = 'Abierto'; 
                 }
                 
-                // Llamada a la función expuesta por el módulo de Firebase para actualizar
                 window.updateTicketInDb(firestoreId, newStatus);
             }
         };
 
         // 5. Inicialización del DOM y Carga de Datos
         window.onload = function() {
-            // Inicializar referencias DOM de la lista principal
             ticketListContainer = document.getElementById('ticket-list');
             ticketCountSpan = document.getElementById('ticket-count');
             emptyStateDiv = document.getElementById('empty-state');
@@ -1069,34 +1006,27 @@
             filterStatusSelect = document.getElementById('filter-status');
             filterPrioritySelect = document.getElementById('filter-priority');
             
-            // Inicializar referencias DOM de Modals de Control
             passwordModal = document.getElementById('password-modal');
             passwordInput = document.getElementById('admin-password-input');
             passwordError = document.getElementById('password-error');
-            
-            // Inicializar referencias DOM de Modal de Detalle
             detailModal = document.getElementById('ticket-detail-modal');
             notesAdminRequired = document.getElementById('notes-admin-required');
-            deleteTicketSection = document.getElementById('delete-ticket-section'); // Nuevo: Referencia al botón de borrado
+            deleteTicketSection = document.getElementById('delete-ticket-section'); 
             
-            // Inicializar referencias DOM de Modal de Confirmación de Borrado
             deleteConfirmationModal = document.getElementById('delete-confirmation-modal');
             deleteTicketSubjectSpan = document.getElementById('delete-ticket-subject');
 
 
-            // Asignación de Eventos del Modal de Contraseña
             agentModeToggle.addEventListener('change', handleToggleChange);
             document.getElementById('confirm-password-btn').addEventListener('click', verifyPassword);
             
-            // Lógica de Cancelar/Cerrar Modal de Contraseña
             document.getElementById('cancel-password-btn').addEventListener('click', () => {
-                window.isAgentMode = false; // Desactivar si estaba activo
-                agentModeToggle.checked = false; // Forzar el switch a OFF
+                window.isAgentMode = false;
+                agentModeToggle.checked = false;
                 hidePasswordModal();
                 window.renderTicketList();
             });
 
-            // Permite presionar Enter en el campo de contraseña
             passwordInput.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') {
                     e.preventDefault();
@@ -1104,25 +1034,20 @@
                 }
             });
             
-            // Cerrar modal de detalle al hacer clic fuera
              detailModal.addEventListener('click', (e) => {
-                if (e.target === detailModal) {
-                    hideTicketDetailModal();
-                }
-            });
+                 if (e.target === detailModal) {
+                     hideTicketDetailModal();
+                 }
+             });
 
-            // Cerrar modal de confirmación al hacer clic fuera
              deleteConfirmationModal.addEventListener('click', (e) => {
-                if (e.target === deleteConfirmationModal) {
-                    hideDeleteConfirmation();
-                }
-            });
+                 if (e.target === deleteConfirmationModal) {
+                     hideDeleteConfirmation();
+                 }
+             });
 
-
-            // Asegurarse de que el switch refleje el estado inicial (false)
             agentModeToggle.checked = window.isAgentMode;
             
-            // FIX: Verificar si el UID ya fue cargado por onAuthStateChanged (soluciona race condition)
             if (window.userId) {
                 const userInfoSpan = document.getElementById('user-info');
                 if (userInfoSpan) {

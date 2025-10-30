@@ -115,6 +115,10 @@
                 });
                 
                 window.allTickets = fetchedTickets; 
+                
+                // NUEVA LLAMADA: Actualizar los contadores de estadísticas
+                updateStatistics(fetchedTickets);
+                
                 window.applyFilters();
                 
                  if (window.currentDetailTicketId && !document.getElementById('ticket-detail-modal').classList.contains('hidden')) {
@@ -352,7 +356,41 @@
             </div>
 
             <!-- Columna de Lista de Tickets (Derecha/Abajo) --><div class="lg:col-span-2">
+                
+                <!-- NUEVO: Panel de Estadísticas -->
+                <h2 class="text-2xl font-bold mb-4 text-gray-800">Estadísticas</h2>
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+                    <!-- Tarjeta Total -->
+                    <div class="bg-white p-5 rounded-xl shadow-lg border border-gray-100">
+                        <p class="text-sm font-medium text-gray-500">Tickets Totales</p>
+                        <p id="stat-total" class="text-3xl font-extrabold text-indigo-600 mt-1">0</p>
+                    </div>
+                    <!-- Tarjeta Abiertos -->
+                    <div class="bg-white p-5 rounded-xl shadow-lg border border-gray-100">
+                        <p class="text-sm font-medium text-gray-500">Abiertos</p>
+                        <p id="stat-open" class="text-3xl font-extrabold text-red-600 mt-1">0</p>
+                    </div>
+                    <!-- Tarjeta En Progreso -->
+                    <div class="bg-white p-5 rounded-xl shadow-lg border border-gray-100">
+                        <p class="text-sm font-medium text-gray-500">En Progreso</p>
+                        <p id="stat-progress" class="text-3xl font-extrabold text-blue-600 mt-1">0</p>
+                    </div>
+                    <!-- Tarjeta Cerrados -->
+                    <div class="bg-white p-5 rounded-xl shadow-lg border border-gray-100">
+                        <p class="text-sm font-medium text-gray-500">Cerrados</p>
+                        <p id="stat-closed" class="text-3xl font-extrabold text-green-600 mt-1">0</p>
+                    </div>
+                </div>
+
+                <!-- Lista de Tickets y Filtros -->
                 <h2 class="text-2xl font-bold mb-4 text-gray-800">Tickets (<span id="ticket-count">0</span>)</h2>
+                
+                <!-- NUEVO: Barra de Búsqueda -->
+                <div class="mb-4">
+                    <input type="text" id="filter-search" oninput="applyFilters()"
+                        class="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150"
+                        placeholder="Buscar por solicitante, asunto, descripción o ID...">
+                </div>
                 
                 <!-- Barra de Filtros --><div class="bg-white p-4 rounded-xl shadow-inner mb-4 flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-4 items-stretch sm:items-center">
                     
@@ -578,11 +616,15 @@
         let filterStatusSelect;
         let filterPrioritySelect;
         let filterDepartmentSelect; // NUEVA VARIABLE
+        let filterSearchInput; // NUEVA VARIABLE
         let detailModal;
         let notesAdminRequired;
         let deleteTicketSection;
         let deleteConfirmationModal;
         let deleteTicketSubjectSpan;
+        
+        // NUEVAS VARIABLES PARA ESTADÍSTICAS
+        let statTotalSpan, statOpenSpan, statProgressSpan, statClosedSpan;
         
         // 1. Funciones de Utilidad
         
@@ -671,14 +713,50 @@
             }
         }
 
+        // --- NUEVA FUNCIÓN: Lógica de Estadísticas ---
+
+        /**
+         * Actualiza los contadores de estadísticas.
+         */
+        function updateStatistics(tickets) {
+            // Guard clause si los elementos no están listos
+            if (!statTotalSpan || !statOpenSpan || !statProgressSpan || !statClosedSpan) {
+                return;
+            }
+
+            const total = tickets.length;
+            const open = tickets.filter(t => t.status === 'Abierto').length;
+            const progress = tickets.filter(t => t.status === 'En Progreso').length;
+            const closed = tickets.filter(t => t.status === 'Cerrado').length;
+
+            statTotalSpan.textContent = total;
+            statOpenSpan.textContent = open;
+            statProgressSpan.textContent = progress;
+            statClosedSpan.textContent = closed;
+        }
+
+
         // --- Lógica de Filtrado ---
 
         window.applyFilters = function() {
             const selectedStatus = filterStatusSelect.value;
             const selectedPriority = filterPrioritySelect.value;
             const selectedDepartment = filterDepartmentSelect.value; // NUEVA LÍNEA
+            const searchTerm = filterSearchInput.value.toLowerCase(); // NUEVA LÍNEA
 
             let filteredTickets = window.allTickets.slice();
+
+            // NUEVO BLOQUE: Filtrar por Búsqueda
+            if (searchTerm) {
+                filteredTickets = filteredTickets.filter(ticket => {
+                    return (
+                        ticket.applicantName.toLowerCase().includes(searchTerm) ||
+                        ticket.subject.toLowerCase().includes(searchTerm) ||
+                        ticket.description.toLowerCase().includes(searchTerm) ||
+                        ticket.id.toLowerCase().includes(searchTerm)
+                    );
+                });
+            }
 
             if (selectedStatus !== 'Todos') {
                 filteredTickets = filteredTickets.filter(ticket => ticket.status === selectedStatus);
@@ -701,6 +779,7 @@
             filterStatusSelect.value = 'Todos';
             filterPrioritySelect.value = 'Todos';
             filterDepartmentSelect.value = 'Todos'; // NUEVA LÍNEA
+            filterSearchInput.value = ''; // NUEVA LÍNEA
             window.applyFilters();
         }
 
@@ -1073,6 +1152,7 @@
             filterStatusSelect = document.getElementById('filter-status');
             filterPrioritySelect = document.getElementById('filter-priority');
             filterDepartmentSelect = document.getElementById('filter-department'); // NUEVA LÍNEA
+            filterSearchInput = document.getElementById('filter-search'); // NUEVA LÍNEA
             
             passwordModal = document.getElementById('password-modal');
             passwordInput = document.getElementById('admin-password-input');
@@ -1084,6 +1164,12 @@
             
             deleteConfirmationModal = document.getElementById('delete-confirmation-modal');
             deleteTicketSubjectSpan = document.getElementById('delete-ticket-subject');
+            
+            // NUEVA INICIALIZACIÓN: Referencias a spans de estadísticas
+            statTotalSpan = document.getElementById('stat-total');
+            statOpenSpan = document.getElementById('stat-open');
+            statProgressSpan = document.getElementById('stat-progress');
+            statClosedSpan = document.getElementById('stat-closed');
 
 
             agentModeToggle.addEventListener('change', handleToggleChange);

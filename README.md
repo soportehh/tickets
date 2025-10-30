@@ -1,14 +1,8 @@
-# tickets
-
-Generación de tickets de IT
-
-
-
-### Propósito General
+# Propósito General
 
 Has creado un **Sistema de Gestión de Tickets (v2)**, una aplicación web completa diseñada para que los usuarios puedan enviar solicitudes de soporte y para que un administrador pueda gestionarlas. La aplicación funciona en tiempo real, lo que significa que todos los cambios se reflejan al instante sin necesidad de recargar la página.
 
-### Tecnologías Utilizadas
+## Tecnologías Utilizadas
 
 * **Frontend:** HTML
 * **Estilos:** Tailwind CSS (cargado desde un CDN)
@@ -17,11 +11,11 @@ Has creado un **Sistema de Gestión de Tickets (v2)**, una aplicación web compl
 
 ---
 
-### Flujo de la Aplicación y Características
+## Flujo de la Aplicación y Características
 
 La aplicación se divide en dos modos de operación: **Modo Usuario** (por defecto) y **Modo Administrador**.
 
-#### 1. Características para Todos los Usuarios
+### 1. Características para Todos los Usuarios
 
 * **Autenticación:** Al cargar la página, la aplicación inicia sesión automáticamente (ya sea de forma anónima o usando un token de la plataforma) y muestra un `UID de Agente` único en el encabezado.
 * **Creación de Tickets:** En el panel izquierdo, cualquier usuario puede rellenar un formulario para crear un nuevo ticket. Este formulario incluye:
@@ -44,7 +38,7 @@ La aplicación se divide en dos modos de operación: **Modo Usuario** (por defec
     * Una pestaña de **"Historial de Estados"** (quién cambió el estado y cuándo).
     * Una pestaña de **"Notas Internas"** (si el administrador ha añadido alguna).
 
-#### 2. Funcionalidades del "Modo Administrador"
+### 2. Funcionalidades del "Modo Administrador"
 
 Este modo desbloquea funciones de gestión y está protegido por una contraseña (`HandhelsV21,`).
 
